@@ -464,7 +464,7 @@ body{
       <button id="emailSignIn" class="auth-action auth-primary" type="submit">Sign in with email</button>
       <button id="emailSignUp" class="auth-action auth-secondary" type="button">Create email account</button>
     </form>
-    <p class="auth-note">This application is configured for one personal account. Your finance records are protected by Supabase Row Level Security. Do not share your password or database keys.</p>
+    <p class="auth-note">Create your own account to manage your finances privately. Each account can access only its own records. Do not share your password or database keys.</p>
   </div>
 </div>
 <div id="accountBar" style="display:none;padding:12px 28px 0 28px">
@@ -506,7 +506,9 @@ body{
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="./config.js"></script>
 <script>
-const KEY='pfm_data_v1';
+const KEY='pfm_data_v1'; // legacy single-user cache key
+let activeStorageKey=KEY;
+let activeIDBKey='data';
 const IDB_NAME='PersonalFinanceManagerDB';
 const IDB_STORE='finance';
 let storageReady=false;
@@ -525,13 +527,7 @@ let selectedBankFilter='';
 
 function defaultData(){return {version:1,profile:{name:'My Finance'},transactions:[],people:[],banks:[],budgets:{},bills:[],goals:[],settings:{currency:'INR',theme:'light'}}}
 function load(){
- try{
-  const raw=localStorage.getItem(KEY);
-  if(raw){
-   const d=JSON.parse(raw);
-   if(d&&d.version){hasLocalData=true;return d;}
-  }
- }catch(e){console.warn('Local storage read failed:',e)}
+ // Never load a shared browser cache before authentication: this browser may be used by multiple accounts.
  return defaultData();
 }
 
@@ -547,7 +543,7 @@ function openFinanceDB(){
 function idbWrite(value){
  return openFinanceDB().then(db=>new Promise((resolve,reject)=>{
   const tx=db.transaction(IDB_STORE,'readwrite');
-  tx.objectStore(IDB_STORE).put(value,'data');
+  tx.objectStore(IDB_STORE).put(value,activeIDBKey);
   tx.oncomplete=()=>{db.close();resolve(true)};
   tx.onerror=()=>{db.close();reject(tx.error||new Error('IndexedDB write failed'))};
  }));
@@ -555,7 +551,7 @@ function idbWrite(value){
 function idbRead(){
  return openFinanceDB().then(db=>new Promise((resolve,reject)=>{
   const tx=db.transaction(IDB_STORE,'readonly');
-  const req=tx.objectStore(IDB_STORE).get('data');
+  const req=tx.objectStore(IDB_STORE).get(activeIDBKey);
   req.onsuccess=()=>{const value=req.result;db.close();resolve(value||null)};
   req.onerror=()=>{db.close();reject(req.error||new Error('IndexedDB read failed'))};
  })).catch(()=>null);
@@ -563,7 +559,7 @@ function idbRead(){
 function idbClear(){
  return openFinanceDB().then(db=>new Promise((resolve,reject)=>{
   const tx=db.transaction(IDB_STORE,'readwrite');
-  tx.objectStore(IDB_STORE).delete('data');
+  tx.objectStore(IDB_STORE).delete(activeIDBKey);
   tx.oncomplete=()=>{db.close();resolve(true)};
   tx.onerror=()=>{db.close();reject(tx.error||new Error('IndexedDB clear failed'))};
  })).catch(()=>false);
@@ -597,7 +593,7 @@ function normalizeFinanceData(value){
 function save(){
   data=normalizeFinanceData(data);
   const snapshot=JSON.stringify(data);
-  try{localStorage.setItem(KEY,snapshot)}catch(e){console.warn('Local cache write failed:',e)}
+  try{localStorage.setItem(activeStorageKey,snapshot)}catch(e){console.warn('Local cache write failed:',e)}
   idbWrite(data).catch(e=>console.warn('IndexedDB backup write failed:',e));
   if(!currentUser || !cloudReady){
     setCloudStatus('Saved on this device; cloud sync is not ready',true);
@@ -622,13 +618,6 @@ async function initPersistentStorage(){
   try{
     if(navigator.storage?.persist) await navigator.storage.persist();
   }catch(e){console.warn('Persistent storage request failed:',e)}
-  try{
-    const backup=await idbRead();
-    if(!hasLocalData && backup && backup.version){
-      data=normalizeFinanceData(backup);
-      try{localStorage.setItem(KEY,JSON.stringify(data));hasLocalData=true}catch(e){}
-    }
-  }catch(e){console.warn('Local backup restore failed:',e)}
   data=normalizeFinanceData(data);
 }
 function uid(p='ID'){return p+'-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,7)}
@@ -985,11 +974,11 @@ async function resetData(){
      );
      if(error){alert('Cloud reset failed: '+error.message);setCloudStatus('Cloud reset failed',true);return;}
    }
-   try{localStorage.removeItem(KEY)}catch(e){}
+   try{localStorage.removeItem(activeStorageKey)}catch(e){}
    await idbClear();
    hasLocalData=false;
    data=empty;
-   try{localStorage.setItem(KEY,JSON.stringify(data))}catch(e){}
+   try{localStorage.setItem(activeStorageKey,JSON.stringify(data))}catch(e){}
    setCloudStatus('✓ Finance data reset');
    render();
  }
@@ -1015,13 +1004,11 @@ function clearAuthError(){
   const box=document.getElementById('authError');
   if(box){box.textContent='';box.style.display='none';}
 }
-function validateAllowedEmail(user){
-  const allowed=String(window.FINANCE_CONFIG?.ALLOWED_EMAIL||'').trim().toLowerCase();
-  const email=String(user?.email||'').trim().toLowerCase();
-  return !allowed || (email && email===allowed);
-}
+function validateAllowedEmail(user){ return !!user?.id; }
 async function loadUserCloudData(user){
   cloudReady=false;
+  activeStorageKey=KEY+'_'+user.id;
+  activeIDBKey='data_'+user.id;
   setCloudStatus('Loading your private finance data…');
   const {data:row,error}=await supabaseClient
     .from('finance_data').select('data,updated_at')
@@ -1029,18 +1016,35 @@ async function loadUserCloudData(user){
   if(error) throw error;
   if(row && row.data){
     data=normalizeFinanceData(row.data);
-    try{localStorage.setItem(KEY,JSON.stringify(data));hasLocalData=true}catch(e){}
+    try{localStorage.setItem(activeStorageKey,JSON.stringify(data));hasLocalData=true}catch(e){}
     await idbWrite(data).catch(()=>{});
     setCloudStatus('✓ Your cloud finance data is loaded');
   }else{
-    // First sign-in: migrate the existing localStorage / IndexedDB dataset.
-    data=normalizeFinanceData(data);
+    // Only the explicitly configured legacy owner may import the old shared single-user browser cache.
+    // New users always start with an empty account, preventing cross-account data leakage on shared devices.
+    const legacyEmail=String(window.FINANCE_CONFIG?.LEGACY_MIGRATION_EMAIL||'').trim().toLowerCase();
+    const userEmail=String(user.email||'').trim().toLowerCase();
+    let initialData=defaultData();
+    if(legacyEmail && userEmail===legacyEmail){
+      try{
+        const raw=localStorage.getItem(KEY);
+        if(raw){const parsed=JSON.parse(raw);if(parsed&&parsed.version)initialData=normalizeFinanceData(parsed);}
+        else {
+          const legacyBackup=await new Promise(resolve=>{
+            openFinanceDB().then(db=>{const tx=db.transaction(IDB_STORE,'readonly');const req=tx.objectStore(IDB_STORE).get('data');req.onsuccess=()=>{const v=req.result;db.close();resolve(v||null)};req.onerror=()=>{db.close();resolve(null)}}).catch(()=>resolve(null));
+          });
+          if(legacyBackup?.version) initialData=normalizeFinanceData(legacyBackup);
+        }
+      }catch(e){console.warn('Legacy cache migration skipped:',e)}
+    }
+    data=initialData;
     const {error:insertError}=await supabaseClient.from('finance_data').insert({
       user_id:user.id,data,updated_at:new Date().toISOString()
     });
     if(insertError) throw insertError;
-    try{localStorage.setItem(KEY,JSON.stringify(data));hasLocalData=true}catch(e){}
-    setCloudStatus('✓ Existing browser data migrated to Supabase');
+    try{localStorage.setItem(activeStorageKey,JSON.stringify(data));hasLocalData=true}catch(e){}
+    await idbWrite(data).catch(()=>{});
+    setCloudStatus(legacyEmail && userEmail===legacyEmail ? '✓ Account created; legacy data migration checked' : '✓ Your private finance workspace is ready');
   }
   cloudReady=true;
   render();
@@ -1072,7 +1076,7 @@ async function activateSession(session){
     console.error('Unable to load cloud data:',error);
     cloudReady=false;
     setCloudStatus('Unable to load cloud data: '+(error.message||'Unknown error'),true);
-    alert('Could not load your Supabase data. Check that the SQL setup and allowed email are correct.\\n\\n'+(error.message||''));
+    alert('Could not load your Supabase data. Check that the multi-user SQL policies are installed and your account is confirmed.\\n\\n'+(error.message||''));
   }
 }
 async function startGoogleLogin(){
@@ -1112,10 +1116,6 @@ async function boot(){
   }
   if(!window.supabase?.createClient){
     showAuth('Supabase library could not load. Check your internet connection and refresh.');
-    return;
-  }
-  if(!FINANCE_CONFIG.ALLOWED_EMAIL || FINANCE_CONFIG.ALLOWED_EMAIL.includes('YOUR_EMAIL')){
-    showAuth('Setup required: enter your personal email address in config.js and in supabase/schema.sql.');
     return;
   }
   supabaseClient=window.supabase.createClient(FINANCE_CONFIG.SUPABASE_URL,FINANCE_CONFIG.SUPABASE_ANON_KEY);
