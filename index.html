@@ -443,6 +443,21 @@ body{
 #cloudStatus{font-size:12px;color:#667085}
 @media(max-width:600px){.auth-card{padding:22px}.auth-card h1{font-size:22px}}
 
+
+/* Developer profile page */
+.developer-wrap{max-width:980px;margin:0 auto}
+.developer-card{display:grid;grid-template-columns:260px 1fr;gap:28px;align-items:center;padding:26px;background:linear-gradient(135deg,#fff 0%,#f7f8ff 100%);border:1px solid #e7e9f5;border-radius:20px;box-shadow:0 16px 42px rgba(16,24,40,.08)}
+.developer-photo{width:100%;max-width:260px;aspect-ratio:1/1;object-fit:cover;object-position:center 28%;border-radius:18px;background:#e5e7eb;box-shadow:0 12px 28px rgba(16,24,40,.14)}
+.developer-eyebrow{font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#4f46e5}
+.developer-name{font-size:clamp(25px,4vw,36px);line-height:1.15;letter-spacing:-.04em;margin:9px 0;color:#101828}
+.developer-role{font-size:15px;color:#667085;line-height:1.6;margin:0 0 20px}
+.developer-links{display:flex;gap:10px;flex-wrap:wrap}
+.developer-link{display:inline-flex;align-items:center;gap:8px;padding:11px 15px;border-radius:10px;text-decoration:none;font-weight:750;border:1px solid #e1e5ee;color:#344054;background:#fff}
+.developer-link.primary{background:#4f46e5;border-color:#4f46e5;color:#fff}
+.developer-link:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(16,24,40,.1)}
+.developer-note{margin-top:18px;color:#667085;font-size:13px;line-height:1.65}
+@media(max-width:680px){.developer-card{grid-template-columns:1fr;padding:20px}.developer-photo{max-width:190px;margin:0 auto}.developer-info{text-align:center}.developer-links{justify-content:center}}
+
 </style>
 </head>
 <body>
@@ -487,6 +502,8 @@ body{
     <button data-page="income">💰 Income</button>
     <button data-page="expenses">🧾 Expenses</button>
     <button data-page="settings">⚙️ Settings & Backup</button>
+    <small>About</small>
+    <button data-page="developer">👨‍💻 Developer</button>
   </div>
 </aside>
 
@@ -666,6 +683,7 @@ function render(){
  if(currentPage==='bills')p.innerHTML=billsPage();
  if(currentPage==='reports')p.innerHTML=reportsPage();
  if(currentPage==='settings')p.innerHTML=settingsPage();
+ if(currentPage==='developer')p.innerHTML=developerPage();
 }
 
 function dashboard(){
@@ -926,6 +944,25 @@ function reportsPage(){
  <div class="grid two section"><div class="card"><div class="section-title"><h2>Monthly Summary</h2></div><div class="tablewrap"><table class="table"><thead><tr><th>Month</th><th>Income</th><th>Expenses</th><th>Balance</th></tr></thead><tbody>${months.map(m=>{let t=totals(m);return `<tr><td>${monthLabel(m)}</td><td class="income">${money(t.income)}</td><td class="expense">${money(t.expense)}</td><td>${money(t.income-t.expense)}</td></tr>`}).join('')}</tbody></table></div></div>
  <div class="card"><div class="section-title"><h2>Expense Categories</h2></div>${rows.length?rows.map(([c,v])=>`<div style="margin:12px 0"><div style="display:flex;justify-content:space-between"><b>${esc(c)}</b><span>${money(v)}</span></div><div class="bar" style="margin-top:6px"><span style="width:${Math.min(100,v/Math.max(1,rows[0][1])*100)}%"></span></div></div>`).join(''):'<div class="empty">No expense data.</div>'}</div></div>`;
 }
+function developerPage(){
+ return header('About the Developer','Meet the creator of Personal Finance Manager.')+
+ `<section class="developer-wrap section">
+   <div class="developer-card">
+     <img class="developer-photo" src="./assets/developer-profile.jpg" alt="Portrait of Konda Tharun Vivekananda" loading="lazy">
+     <div class="developer-info">
+       <div class="developer-eyebrow">Designed & developed by</div>
+       <h2 class="developer-name">Konda Tharun Vivekananda</h2>
+       <p class="developer-role">Creator of Personal Finance Manager</p>
+       <div class="developer-links">
+         <a class="developer-link" href="mailto:tharunkonda80@gmail.com">✉ Email Developer</a>
+         <a class="developer-link primary" href="https://www.linkedin.com/in/tharun-vivekananda-konda-13ab241a4/" target="_blank" rel="noopener noreferrer">in&nbsp; LinkedIn Profile ↗</a>
+       </div>
+       <p class="developer-note">For feedback, suggestions, or questions about this application, use the contact links above.</p>
+     </div>
+   </div>
+ </section>`;
+}
+
 function settingsPage(){
  return header('Settings & Backup','Your finance data is synchronized with your private Supabase cloud database. Keep JSON backups as an additional safety measure.',`<button class="btn danger" onclick="resetData()">Reset All Data</button>`)+
  `<div class="grid two"><div class="card"><h2>JSON Backup</h2><p style="color:var(--muted)">Export every transaction, comment, person, loan, budget, bill and setting into one JSON file.</p><button class="btn primary" onclick="exportJSON()">⬇ Export JSON</button></div>
