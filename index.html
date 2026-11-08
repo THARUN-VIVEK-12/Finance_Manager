@@ -371,7 +371,6 @@ body{
   .bank-actions .btn:first-child{grid-column:auto}
 }
 
-
 /* Final layout corrections */
 .full-width-section{width:100%;min-width:0}
 .bank-card{min-width:0}
@@ -382,7 +381,6 @@ body{
 @media(max-width:760px){
   .main{margin-left:0;width:100%}
 }
-
 
 .date-range-picker{
   display:flex;
@@ -411,7 +409,6 @@ body{
     max-width:none;
   }
 }
-
 
 /* Total balance across all bank accounts */
 .bank-total-card{width:100%;min-width:0;margin:0 0 18px;padding:22px 24px;display:flex;align-items:center;justify-content:space-between;gap:20px;background:linear-gradient(135deg,#ffffff 0%,#f5f3ff 100%);border:1px solid rgba(79,70,229,.12)}
@@ -443,7 +440,6 @@ body{
 #cloudStatus{font-size:12px;color:#667085}
 @media(max-width:600px){.auth-card{padding:22px}.auth-card h1{font-size:22px}}
 
-
 /* Developer profile page */
 .developer-wrap{max-width:980px;margin:0 auto}
 .developer-card{display:grid;grid-template-columns:260px 1fr;gap:28px;align-items:center;padding:26px;background:linear-gradient(135deg,#fff 0%,#f7f8ff 100%);border:1px solid #e7e9f5;border-radius:20px;box-shadow:0 16px 42px rgba(16,24,40,.08)}
@@ -457,7 +453,6 @@ body{
 .developer-link:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(16,24,40,.1)}
 .developer-note{margin-top:18px;color:#667085;font-size:13px;line-height:1.65}
 @media(max-width:680px){.developer-card{grid-template-columns:1fr;padding:20px}.developer-photo{max-width:190px;margin:0 auto}.developer-info{text-align:center}.developer-links{justify-content:center}}
-
 </style>
 </head>
 <body>
@@ -479,7 +474,7 @@ body{
       <button id="emailSignIn" class="auth-action auth-primary" type="submit">Sign in with email</button>
       <button id="emailSignUp" class="auth-action auth-secondary" type="button">Create email account</button>
     </form>
-    <p class="auth-note">Create your own account to manage your finances privately. Each account can access only its own records. Do not share your password or database keys.</p>
+    <p class="auth-note">Each account can access only its own records. Do not share your password or database keys.</p>
   </div>
 </div>
 <div id="accountBar" style="display:none;padding:12px 28px 0 28px">
@@ -523,7 +518,7 @@ body{
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="./config.js"></script>
 <script>
-const KEY='pfm_data_v1'; // legacy single-user cache key
+const KEY='pfm_data_v1';
 let activeStorageKey=KEY;
 let activeIDBKey='data';
 const IDB_NAME='PersonalFinanceManagerDB';
@@ -534,13 +529,16 @@ let hasLocalData=false;
 const EXPENSE_CATS=['Food','Rent','Travel','Shopping','Bills','Education','Healthcare','Entertainment','EMI','Investments','Bank Charges','Loan / People','Miscellaneous'];
 const INCOME_CATS=['Salary','Savings','Bank Interest','Bonus','Freelance','Business Income','Investment Returns','Rental Income','Refund','Gift Received','Loan Received','Other Income'];
 const BANK_CHARGE_CATS=['SMS Charges','Debit Card Charges','Credit Card Charges','ATM Charges','Account Maintenance','IMPS/NEFT Charges','UPI Charges','Minimum Balance Charges','Cheque Charges','GST on Bank Charges','Other Bank Charges'];
+const LOAN_CAT='Loan / People';
 const CATS=[...EXPENSE_CATS];
 const METHODS=['Cash','UPI','Debit Card','Credit Card','Bank Transfer','Net Banking','Other'];
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 let data=load(); data.banks=data.banks||[]; data.transactions=(data.transactions||[]).map(t=>({...t,bankId:t.bankId||''}));
 let currentPage='dashboard';
-let selectedMonth=new Date().getFullYear()>=1900&&new Date().getFullYear()<=2500?new Date().toISOString().slice(0,7):'2026-01';
+let selectedMonth=new Date().toISOString().slice(0,7);
 let selectedBankFilter='';
+let currentTxFilter='all';
+let pendingSaves=0;
 
 function defaultData(){return {version:1,profile:{name:'My Finance'},transactions:[],people:[],banks:[],budgets:{},bills:[],goals:[],settings:{currency:'INR',theme:'light'}}}
 function load(){
@@ -564,14 +562,6 @@ function idbWrite(value){
   tx.oncomplete=()=>{db.close();resolve(true)};
   tx.onerror=()=>{db.close();reject(tx.error||new Error('IndexedDB write failed'))};
  }));
-}
-function idbRead(){
- return openFinanceDB().then(db=>new Promise((resolve,reject)=>{
-  const tx=db.transaction(IDB_STORE,'readonly');
-  const req=tx.objectStore(IDB_STORE).get(activeIDBKey);
-  req.onsuccess=()=>{const value=req.result;db.close();resolve(value||null)};
-  req.onerror=()=>{db.close();reject(req.error||new Error('IndexedDB read failed'))};
- })).catch(()=>null);
 }
 function idbClear(){
  return openFinanceDB().then(db=>new Promise((resolve,reject)=>{
@@ -618,6 +608,7 @@ function save(){
   }
   setCloudStatus('Saving securely to cloud…');
   const saveUserId=currentUser.id;
+  pendingSaves++;
   cloudSaveQueue=cloudSaveQueue.then(async()=>{
     const payload={user_id:saveUserId,data:JSON.parse(snapshot),updated_at:new Date().toISOString()};
     const {error}=await supabaseClient.from('finance_data').upsert(payload,{onConflict:'user_id'});
@@ -628,9 +619,12 @@ function save(){
     console.error('Cloud save failed:',error);
     setCloudStatus('Cloud sync failed — local copy retained. Check connection.',true);
     return false;
-  });
+  }).finally(()=>{pendingSaves--;});
   return cloudSaveQueue;
 }
+window.addEventListener('beforeunload',e=>{
+  if(pendingSaves>0){e.preventDefault();e.returnValue='';}
+});
 async function initPersistentStorage(){
   try{
     if(navigator.storage?.persist) await navigator.storage.persist();
@@ -643,8 +637,11 @@ function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&l
 function monthLabel(k){let [y,m]=k.split('-');return MONTHS[+m-1]+' '+y}
 function txMonth(t){return (t.date||'').slice(0,7)}
 function txs(){return data.transactions}
+function isLoan(t){return t.category===LOAN_CAT}
+// Loans/repayments are tracked in People & Money, so they are excluded from income and expense totals.
 function totals(month=null){
  let a=month?txs().filter(t=>txMonth(t)===month):txs();
+ a=a.filter(t=>!isLoan(t));
  return {income:a.filter(t=>t.type==='income').reduce((s,t)=>s+ +t.amount,0),expense:a.filter(t=>t.type==='expense').reduce((s,t)=>s+ +t.amount,0)};
 }
 function navigate(p){currentPage=p;document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.page===p));render()}
@@ -688,9 +685,14 @@ function render(){
 
 function dashboard(){
  let t=totals(selectedMonth), bal=t.income-t.expense;
- let recent=txs().filter(x=>txMonth(x)===selectedMonth).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,8);
- let months=[];
- for(let i=5;i>=0;i--){let d=new Date();d.setMonth(d.getMonth()-i);months.push(d.toISOString().slice(0,7))}
+ let recent=txs().filter(x=>txMonth(x)===selectedMonth&&!isLoan(x)).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,8);
+ // Build the 6-month trend ending at the selected month (safe across month boundaries).
+ const [sy,sm]=selectedMonth.split('-').map(Number);
+ const months=[];
+ for(let i=5;i>=0;i--){
+   const d=new Date(sy,sm-1-i,1);
+   months.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
+ }
  let max=Math.max(1,...months.map(m=>Math.max(totals(m).income,totals(m).expense)));
  return header('Dashboard',`Financial overview • ${monthLabel(selectedMonth)}`,monthPicker())+
  `<div class="grid cards">
@@ -702,7 +704,7 @@ function dashboard(){
  <div class="grid two section">
   <div class="card"><div class="section-title"><h2>Income vs Expenses</h2></div>
    <div class="chart">${months.map(m=>{let x=totals(m),h=Math.max(4,x.expense/max*150);return `<div class="barcol"><i style="height:${h}px" title="${money(x.expense)}"></i><small>${m.slice(5)}</small></div>`}).join('')}</div>
-   <div style="color:var(--muted);font-size:12px">Bars show monthly expenses for the last 6 months.</div>
+   <div style="color:var(--muted);font-size:12px">Bars show monthly expenses for the 6 months ending in the selected month.</div>
   </div>
   <div class="card"><div class="section-title"><h2>People Balances</h2><button class="btn" onclick="navigate('people')">View</button></div>
    ${peopleSummary()}
@@ -716,6 +718,7 @@ function peopleSummary(){
  return data.people.slice(0,5).map(p=>{let b=personBalance(p.id);return `<div style="display:flex;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--line)"><b>${esc(p.name)}</b><span class="${b>=0?'positive':'negative'}">${b>=0?'Owed to you':'You owe'} ${money(Math.abs(b))}</span></div>`}).join('');
 }
 function transactionsPage(filter){
+ currentTxFilter=filter;
  let bank=data.banks?.find(b=>b.id===selectedBankFilter);
  let arr=txs()
    .filter(t=>filter==='all'||t.type===filter)
@@ -723,6 +726,7 @@ function transactionsPage(filter){
    .filter(t=>!selectedBankFilter||t.bankId===selectedBankFilter)
    .sort((a,b)=>b.date.localeCompare(a.date));
  let title=filter==='income'?'Income':filter==='expense'?'Expenses':'Transactions';
+ let addLabel=filter==='income'?'Income':filter==='expense'?'Expense':'Transaction';
  let bankNote=bank?` • ${esc(bank.name)} account transactions`:'';
  return header(title,`${monthLabel(selectedMonth)}${bankNote} • ${arr.length} records`,monthPicker())+
  `<div class="card">
@@ -732,8 +736,8 @@ function transactionsPage(filter){
    </div>`:''}
    <div class="toolbar">
      <input id="txSearch" placeholder="Search description, comments, category..." oninput="filterTxTable()" />
-     <select id="txCat" onchange="filterTxTable()"><option value="">All categories</option>${[...new Set([...EXPENSE_CATS,...INCOME_CATS,...BANK_CHARGE_CATS])].map(c=>`<option>${c}</option>`).join('')}</select>
-     <button class="btn primary" onclick="openTxModal('${filter==='income'?'income':filter==='expense'?'expense':''}')">＋ Add ${title==='Transactions'?'Transaction':title.slice(0,-1)}</button>
+     <select id="txCat" onchange="filterTxTable()"><option value="">All categories</option>${[...new Set([...EXPENSE_CATS,...INCOME_CATS,...BANK_CHARGE_CATS])].map(c=>`<option>${esc(c)}</option>`).join('')}</select>
+     <button class="btn primary" onclick="openTxModal('${filter==='income'?'income':filter==='expense'?'expense':''}')">＋ Add ${addLabel}</button>
    </div>
    <div id="txTableHost">${txTable(arr)}</div>
  </div>`;
@@ -742,12 +746,13 @@ function txTable(arr){
  if(!arr.length)return `<div class="empty">No transactions for this month.</div>`;
  return `<div class="tablewrap"><table class="table"><thead><tr><th>Date</th><th>Type</th><th>Category</th><th>Description</th><th>Person</th><th>Amount</th><th>Status</th><th></th></tr></thead><tbody>${arr.map(t=>{
  let person=data.people.find(p=>p.id===t.personId);
- return `<tr><td>${esc(t.date)}</td><td><span class="tag ${t.type}">${t.type}</span></td><td>${esc(t.category)}</td><td><b>${esc(t.description||'')}</b><br><small style="color:var(--muted)">${esc(t.comments||'')}</small></td><td>${person?esc(person.name):'—'}</td><td class="${t.type==='income'?'income':'expense'}"><b>${t.type==='income'?'+':'-'}${money(t.amount)}</b></td><td><span class="tag ${t.status==='Pending'?'pending':''}">${esc(t.status||'Paid')}</span></td><td><button class="btn" onclick="editTx('${t.id}')">Edit</button> <button class="btn" onclick="deleteTx('${t.id}')">Delete</button></td></tr>`
+ return `<tr><td>${esc(t.date)}</td><td><span class="tag ${esc(t.type)}">${esc(t.type)}</span></td><td>${esc(t.category)}</td><td><b>${esc(t.description||'')}</b><br><small style="color:var(--muted)">${esc(t.comments||'')}</small></td><td>${person?esc(person.name):'—'}</td><td class="${t.type==='income'?'income':'expense'}"><b>${t.type==='income'?'+':'-'}${money(t.amount)}</b></td><td><span class="tag ${t.status==='Pending'?'pending':''}">${esc(t.status||'Paid')}</span></td><td><button class="btn" onclick="editTx('${esc(t.id)}')">Edit</button> <button class="btn" onclick="deleteTx('${esc(t.id)}')">Delete</button></td></tr>`
  }).join('')}</tbody></table></div>`;
 }
 function filterTxTable(){
  let s=(document.getElementById('txSearch')?.value||'').toLowerCase(),c=document.getElementById('txCat')?.value||'';
  let arr=txs().filter(t=>txMonth(t)===selectedMonth)
+   .filter(t=>currentTxFilter==='all'||t.type===currentTxFilter)
    .filter(t=>!selectedBankFilter||t.bankId===selectedBankFilter)
    .filter(t=>(!s||JSON.stringify(t).toLowerCase().includes(s))&&(!c||t.category===c));
  document.getElementById('txTableHost').innerHTML=txTable(arr);
@@ -767,31 +772,43 @@ function showTxForm(t,editing){
  <div><label>Amount</label><input type="number" name="amount" step="0.01" min="0" value="${esc(t.amount)}" required></div>
  <div><label>Description</label><input name="description" value="${esc(t.description)}" placeholder="e.g. Grocery shopping"></div>
  <div><label>Payment Method</label><select name="paymentMethod">${METHODS.map(c=>`<option ${c===t.paymentMethod?'selected':''}>${c}</option>`).join('')}</select></div>
- <div><label>Person (optional)</label><select name="personId"><option value="">No person</option>${data.people.map(p=>`<option value="${p.id}" ${p.id===t.personId?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>
- <div><label>Bank / Account (optional)</label><select name="bankId"><option value="">No bank</option>${(data.banks||[]).map(b=>`<option value="${b.id}" ${b.id===t.bankId?'selected':''}>${esc(b.name)} — ${esc(b.accountLast4||'')}</option>`).join('')}</select></div>
+ <div><label>Person (optional)</label><select name="personId"><option value="">No person</option>${data.people.map(p=>`<option value="${esc(p.id)}" ${p.id===t.personId?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>
+ <div><label>Bank / Account (optional)</label><select name="bankId"><option value="">No bank</option>${(data.banks||[]).map(b=>`<option value="${esc(b.id)}" ${b.id===t.bankId?'selected':''}>${esc(b.name)} — ${esc(b.accountLast4||'')}</option>`).join('')}</select></div>
  <div><label>Status</label><select name="status"><option ${t.status==='Paid'?'selected':''}>Paid</option><option ${t.status==='Pending'?'selected':''}>Pending</option></select></div>
  <div class="full"><label>Comments / More Details</label><textarea name="comments" placeholder="Add any detailed information about this money...">${esc(t.comments)}</textarea></div>
  <div><label><input style="width:auto" type="checkbox" name="recurring" ${t.recurring?'checked':''}> Recurring transaction</label></div>
  </div><div class="actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button class="btn primary">${editing?'Save Changes':'Add Transaction'}</button></div></form>`);
- document.getElementById('txForm').onsubmit=e=>{e.preventDefault();let f=new FormData(e.target),o=Object.fromEntries(f);o.id=t.id||uid('TXN');o.amount=+o.amount;o.recurring=f.has('recurring');if(!o.personId)o.personId='';if(!o.bankId)o.bankId='';if(editing){let i=data.transactions.findIndex(x=>x.id===t.id);data.transactions[i]=o}else data.transactions.push(o);save();closeModal();render()}
+ document.getElementById('txForm').onsubmit=e=>{
+   e.preventDefault();
+   let f=new FormData(e.target),o=Object.fromEntries(f);
+   o.id=t.id||uid('TXN');
+   o.amount=+o.amount;
+   o.recurring=f.has('recurring');
+   if(!o.personId)o.personId='';
+   if(!o.bankId)o.bankId='';
+   if(editing){let i=data.transactions.findIndex(x=>x.id===t.id);data.transactions[i]=o}else data.transactions.push(o);
+   save();closeModal();render();
+ }
 }
 function peoplePage(){
  return header('People & Money','Track money you owe others, money owed to you, loans and repayments.',`<button class="btn primary" onclick="openPersonModal()">＋ Add Person</button>`) +
  `<div class="grid persongrid">${data.people.length?data.people.map(p=>personCard(p)).join(''):`<div class="card empty" style="grid-column:1/-1">No people added. Add someone to start tracking shared money or loans.</div>`}</div>
  <div class="card section"><div class="section-title"><h2>People-related transactions</h2></div>${txTable(txs().filter(t=>t.personId))}</div>`;
 }
+// Positive balance = the person owes you. Lending (cash out) and repaying you-to-them both move the balance the same way for either relation.
 function personBalance(id){
  let b=0;
- txs().filter(t=>t.personId===id).forEach(t=>{
-  // moneyRelation: owed_to_me means person owes user; i_owe means user owes person
-  if(t.moneyRelation==='owed_to_me') b += t.type==='income'? -+t.amount:+t.amount;
-  if(t.moneyRelation==='i_owe') b -= t.type==='income'? -+t.amount:+t.amount;
+ txs().filter(t=>t.personId===id&&(t.moneyRelation)).forEach(t=>{
+  const amt=+t.amount||0;
+  const delta=t.type==='expense'?amt:-amt; // expense = cash out (lent / repaid them); income = cash in (repaid by them / borrowed)
+  if(t.moneyRelation==='owed_to_me') b+=delta;
+  if(t.moneyRelation==='i_owe') b+=delta; // same cash logic: a loan you borrowed (income) lowers b; repaying them (expense) raises b
  });
  return b;
 }
 function personCard(p){
  let b=personBalance(p.id);
- return `<div class="card person"><div class="section-title"><h2>${esc(p.name)}</h2><button class="btn" onclick="editPerson('${p.id}')">Edit</button></div><div class="big ${b>=0?'positive':'negative'}">${b>=0?money(b):money(-b)}</div><div style="color:var(--muted);font-size:13px">${b>0?'They owe you':b<0?'You owe them':'Settled'}</div><hr style="border:0;border-top:1px solid var(--line);margin:14px 0"><div style="font-size:13px">${esc(p.phone||'')} ${p.notes?'• '+esc(p.notes):''}</div><div class="actions"><button class="btn primary" onclick="openLoanModal('${p.id}')">＋ Money / Loan</button><button class="btn danger" onclick="deletePerson('${p.id}')">Delete Person</button></div></div>`;
+ return `<div class="card person"><div class="section-title"><h2>${esc(p.name)}</h2><button class="btn" onclick="editPerson('${esc(p.id)}')">Edit</button></div><div class="big ${b>=0?'positive':'negative'}">${money(Math.abs(b))}</div><div style="color:var(--muted);font-size:13px">${b>0?'They owe you':b<0?'You owe them':'Settled'}</div><hr style="border:0;border-top:1px solid var(--line);margin:14px 0"><div style="font-size:13px">${esc(p.phone||'')} ${p.notes?'• '+esc(p.notes):''}</div><div class="actions"><button class="btn primary" onclick="openLoanModal('${esc(p.id)}')">＋ Money / Loan</button><button class="btn danger" onclick="deletePerson('${esc(p.id)}')">Delete Person</button></div></div>`;
 }
 function openPersonModal(existing){
  let p=existing||{name:'',phone:'',notes:''};
@@ -799,6 +816,12 @@ function openPersonModal(existing){
  document.getElementById('personForm').onsubmit=e=>{e.preventDefault();let o=Object.fromEntries(new FormData(e.target));o.id=p.id||uid('PERSON');if(p.id){Object.assign(data.people.find(x=>x.id===p.id),o)}else data.people.push(o);save();closeModal();render()}
 }
 function editPerson(id){let p=data.people.find(x=>x.id===id);if(p)openPersonModal(p)}
+// Loan records: "Loan" = money moved to or from the person; "Repayment" = money coming back.
+// Cash direction is derived so the balance stays correct:
+//   they owe me + Loan (I lent)      -> expense (cash out)
+//   they owe me + Repayment (repaid) -> income  (cash in)
+//   I owe them + Loan (I borrowed)   -> income  (cash in)
+//   I owe them + Repayment (I repaid)-> expense (cash out)
 function openLoanModal(personId){
  let p=data.people.find(x=>x.id===personId);
  openModal(`Add Money Record • ${esc(p?.name||'')}`,`<form id="loanForm"><div class="formgrid">
@@ -809,7 +832,22 @@ function openLoanModal(personId){
  <div class="full"><label>Description</label><input name="description" placeholder="e.g. Borrowed for travel"></div>
  <div class="full"><label>Comments / More Details</label><textarea name="comments"></textarea></div>
  </div><div class="actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button class="btn primary">Add Record</button></div></form>`);
- document.getElementById('loanForm').onsubmit=e=>{e.preventDefault();let o=Object.fromEntries(new FormData(e.target));o.id=uid('TXN');o.type=o.moneyRelation==='owed_to_me'?'expense':'expense';o.category='Loan / People';o.amount=+o.amount;o.personId=personId;o.paymentMethod='Other';o.status='Pending';o.recurring=false;data.transactions.push(o);save();closeModal();render()}
+ document.getElementById('loanForm').onsubmit=e=>{
+   e.preventDefault();
+   let o=Object.fromEntries(new FormData(e.target));
+   const isRepayment=o.loanKind==='Repayment';
+   const relOwedToMe=o.moneyRelation==='owed_to_me';
+   o.id=uid('TXN');
+   o.type=(relOwedToMe!==isRepayment)?'expense':'income';
+   o.category=LOAN_CAT;
+   o.amount=+o.amount;
+   o.personId=personId;
+   o.paymentMethod='Other';
+   o.status='Pending';
+   o.recurring=false;
+   data.transactions.push(o);
+   save();closeModal();render();
+ }
 }
 
 function banksPage(){
@@ -834,17 +872,17 @@ function banksPage(){
 function bankCard(b){
  let linked=txs().filter(t=>t.bankId===b.id), income=linked.filter(t=>t.type==='income').reduce((s,t)=>s+ +t.amount,0), expense=linked.filter(t=>t.type==='expense').reduce((s,t)=>s+ +t.amount,0);
  let computed=+b.openingBalance+income-expense;
- return `<div class="card person bank-card"><div class="section-title"><h2>🏦 ${esc(b.name)}</h2><button class="btn" onclick="editBank('${b.id}')">Edit</button></div>
+ return `<div class="card person bank-card"><div class="section-title"><h2>🏦 ${esc(b.name)}</h2><button class="btn" onclick="editBank('${esc(b.id)}')">Edit</button></div>
  <div class="big balance">${money(computed)}</div><div style="color:var(--muted);font-size:13px">Calculated balance</div>
  <hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
  <div style="font-size:13px"><b>Account:</b> ${esc(b.accountLast4?'•••• '+b.accountLast4:'Not specified')}</div>
  <div style="font-size:13px;margin-top:5px"><b>Opening:</b> ${money(b.openingBalance)}</div>
  <div style="font-size:13px;margin-top:5px"><span class="income">Income ${money(income)}</span> · <span class="expense">Expenses ${money(expense)}</span></div>
  <div style="font-size:12px;color:var(--muted);margin-top:8px">${esc(b.notes||'')}</div>
- <div class="bank-actions"><button class="btn primary" onclick="openBankChargeModal('${b.id}')">＋ Bank Charge</button><button class="btn" onclick="viewBankTransactions('${b.id}')">Transactions</button><button class="btn danger" onclick="deleteBank('${b.id}')">Delete Bank</button></div></div>`;
+ <div class="bank-actions"><button class="btn primary" onclick="openBankChargeModal('${esc(b.id)}')">＋ Bank Charge</button><button class="btn" onclick="viewBankTransactions('${esc(b.id)}')">Transactions</button><button class="btn danger" onclick="deleteBank('${esc(b.id)}')">Delete Bank</button></div></div>`;
 }
 function bankChargesTable(){
- let a=txs().filter(t=>t.category==='Bank Charges'||BANK_CHARGE_CATS.includes(t.category)).sort((x,y)=>y.date.localeCompare(x.date));
+ let a=txs().filter(t=>BANK_CHARGE_CATS.includes(t.category)||t.category==='Bank Charges').sort((x,y)=>y.date.localeCompare(x.date));
  if(!a.length)return `<div class="empty">No bank charges recorded yet.</div>`;
  return txTable(a);
 }
@@ -860,18 +898,17 @@ function openBankModal(existing){
 }
 function editBank(id){let b=(data.banks||[]).find(x=>x.id===id);if(b)openBankModal(b)}
 function openBankChargeModal(bankId=''){
- let b=(data.banks||[]).find(x=>x.id===bankId);
- let t={type:'expense',date:new Date().toISOString().slice(0,10),category:'SMS Charges',amount:'',description:'',comments:'',paymentMethod:'Bank Transfer',personId:'',bankId:bankId,status:'Paid',recurring:false};
+ let t={date:new Date().toISOString().slice(0,10)};
  openModal('Add Bank Charge',`<form id="bankChargeForm"><div class="formgrid">
  <div><label>Date</label><input type="date" name="date" value="${t.date}" required></div>
- <div><label>Bank</label><select name="bankId" required>${(data.banks||[]).map(x=>`<option value="${x.id}" ${x.id===bankId?'selected':''}>${esc(x.name)} ${x.accountLast4?'••••'+esc(x.accountLast4):''}</option>`).join('')}</select></div>
+ <div><label>Bank</label><select name="bankId" required>${(data.banks||[]).map(x=>`<option value="${esc(x.id)}" ${x.id===bankId?'selected':''}>${esc(x.name)} ${x.accountLast4?'••••'+esc(x.accountLast4):''}</option>`).join('')}</select></div>
  <div><label>Charge Category</label><select name="category">${BANK_CHARGE_CATS.map(c=>`<option>${c}</option>`).join('')}</select></div>
  <div><label>Amount</label><input type="number" name="amount" min="0" step=".01" required></div>
  <div><label>Description</label><input name="description" placeholder="e.g. Quarterly SMS charge"></div>
  <div><label>Status</label><select name="status"><option>Paid</option><option>Pending</option></select></div>
  <div class="full"><label>Comments / More Details</label><textarea name="comments"></textarea></div>
  </div><div class="actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button class="btn primary">Save Bank Charge</button></div></form>`);
- document.getElementById('bankChargeForm').onsubmit=e=>{e.preventDefault();let o=Object.fromEntries(new FormData(e.target));o.id=uid('TXN');o.type='expense';o.amount=+o.amount;o.personId='';o.paymentMethod='Bank';o.recurring=false;data.transactions.push(o);save();closeModal();render()}
+ document.getElementById('bankChargeForm').onsubmit=e=>{e.preventDefault();let o=Object.fromEntries(new FormData(e.target));o.id=uid('TXN');o.type='expense';o.amount=+o.amount;o.personId='';o.paymentMethod='Bank Transfer';o.recurring=false;data.transactions.push(o);save();closeModal();render()}
 }
 function viewBankTransactions(id){
  selectedBankFilter=id;
@@ -899,12 +936,18 @@ function clearCategoryBudget(category){
 }
 function saveCategoryBudgets(){
  let b=data.budgets[selectedMonth]||{total:0,categories:{}};
+ b.categories=b.categories||{};
  document.querySelectorAll('[id^="budget-"]').forEach(i=>{let c=i.id.replace('budget-','');b.categories[c]=+i.value||0});
  let total=document.querySelector('#budgetForm input[name=total]');b.total=+total.value||0;data.budgets[selectedMonth]=b;save();render();alert('Budget saved.');
 }
 function billsPage(){
  return header('Bills & Subscriptions','Track recurring bills, due dates and payment status.',`<button class="btn primary" onclick="openBillModal()">＋ Add Bill</button>`) +
- `<div class="card">${data.bills.length?`<div class="tablewrap"><table class="table"><thead><tr><th>Name</th><th>Amount</th><th>Due</th><th>Frequency</th><th>Status</th><th></th></tr></thead><tbody>${data.bills.map(b=>`<tr><td><b>${esc(b.name)}</b><br><small>${esc(b.comments||'')}</small></td><td>${money(b.amount)}</td><td>${esc(b.due)}</td><td>${esc(b.frequency)}</td><td><span class="tag ${b.status==='Pending'?'pending':''}">${esc(b.status)}</span></td><td><button class="btn" onclick="deleteBill('${b.id}')">Delete</button></td></tr>`).join('')}</tbody></table></div>`:`<div class="empty">No bills or subscriptions added.</div>`}</div>`;
+ `<div class="card">${data.bills.length?`<div class="tablewrap"><table class="table"><thead><tr><th>Name</th><th>Amount</th><th>Due</th><th>Frequency</th><th>Status</th><th></th></tr></thead><tbody>${data.bills.map(b=>`<tr><td><b>${esc(b.name)}</b><br><small>${esc(b.comments||'')}</small></td><td>${money(b.amount)}</td><td>${esc(b.due)}</td><td>${esc(b.frequency)}</td><td><span class="tag ${b.status==='Pending'?'pending':''}">${esc(b.status)}</span></td><td><button class="btn" onclick="toggleBillStatus('${esc(b.id)}')">Mark ${b.status==='Paid'?'Pending':'Paid'}</button> <button class="btn" onclick="deleteBill('${esc(b.id)}')">Delete</button></td></tr>`).join('')}</tbody></table></div>`:`<div class="empty">No bills or subscriptions added.</div>`}</div>`;
+}
+function toggleBillStatus(id){
+ let b=data.bills.find(x=>x.id===id); if(!b)return;
+ b.status=b.status==='Paid'?'Pending':'Paid';
+ save();render();
 }
 function openBillModal(){
  openModal('Add Bill / Subscription',`<form id="billForm"><div class="formgrid"><div><label>Name</label><input name="name" required placeholder="Internet / Netflix / EMI"></div><div><label>Amount</label><input name="amount" type="number" min="0" step=".01" required></div><div><label>Due Date</label><input name="due" type="date" min="1900-01-01" max="2500-12-31" required></div><div><label>Frequency</label><select name="frequency"><option>Monthly</option><option>Weekly</option><option>Quarterly</option><option>Yearly</option><option>One-time</option></select></div><div><label>Status</label><select name="status"><option>Pending</option><option>Paid</option></select></div><div class="full"><label>Comments</label><textarea name="comments"></textarea></div></div><div class="actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button class="btn primary">Save Bill</button></div></form>`);
@@ -937,7 +980,7 @@ function deleteBill(id){
 }
 function reportsPage(){
  let all=totals(), months=[];let reportYear=parseInt(selectedMonth.slice(0,4),10)||new Date().getFullYear();for(let i=1;i<=12;i++){months.push(`${reportYear}-${String(i).padStart(2,'0')}`)}
- let cat={};txs().filter(t=>t.type==='expense').forEach(t=>cat[t.category]=(cat[t.category]||0)+ +t.amount);
+ let cat={};txs().filter(t=>t.type==='expense'&&!isLoan(t)).forEach(t=>cat[t.category]=(cat[t.category]||0)+ +t.amount);
  let rows=Object.entries(cat).sort((a,b)=>b[1]-a[1]);
  return header('Reports',`Yearly and category-level financial analysis • ${reportYear}`,`${monthPicker()} <button class="btn primary" onclick="exportJSON()">⬇ Export JSON</button>`)+
  `<div class="grid cards"><div class="card metric"><div class="label">ALL-TIME INCOME</div><div class="value income">${money(all.income)}</div></div><div class="card metric"><div class="label">ALL-TIME EXPENSES</div><div class="value expense">${money(all.expense)}</div></div><div class="card metric"><div class="label">ALL-TIME BALANCE</div><div class="value balance">${money(all.income-all.expense)}</div></div><div class="card metric"><div class="label">TRANSACTIONS</div><div class="value">${txs().length}</div></div></div>
@@ -948,7 +991,7 @@ function developerPage(){
  return header('About the Developer','Meet the creator of Personal Finance Manager.')+
  `<section class="developer-wrap section">
    <div class="developer-card">
-     <img class="developer-photo" src="data:image/jpeg;base64,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" alt="Portrait of Konda Tharun Vivekananda" loading="lazy">
+     <img class="developer-photo" src="./developer-photo.jpg" alt="Portrait of Konda Tharun Vivekananda" loading="lazy">
      <div class="developer-info">
        <div class="developer-eyebrow">Designed & developed by</div>
        <h2 class="developer-name">Konda Tharun Vivekananda</h2>
@@ -981,9 +1024,11 @@ function importJSON(file){
  if(!file)return;
  let mode=document.getElementById('importMode')?.value||'replace';
  let r=new FileReader();r.onload=()=>{
-  try{let incoming=JSON.parse(r.result);if(!incoming||!Array.isArray(incoming.transactions)||!Array.isArray(incoming.people))throw Error('Invalid finance backup');
-incoming.banks=incoming.banks||[];incoming.budgets=incoming.budgets||{};incoming.bills=incoming.bills||[];incoming.goals=incoming.goals||[];
-   if(mode==='replace'){data=incoming;data.version=1;save();render();alert('JSON data imported successfully.')}
+  try{
+   let incoming=JSON.parse(r.result);
+   if(!incoming||!Array.isArray(incoming.transactions)||!Array.isArray(incoming.people))throw Error('Invalid finance backup');
+   incoming.banks=incoming.banks||[];incoming.budgets=incoming.budgets||{};incoming.bills=incoming.bills||[];incoming.goals=incoming.goals||[];
+   if(mode==='replace'){data=normalizeFinanceData(incoming);save();render();alert('JSON data imported successfully.')}
    else{
     let ids=new Set(data.transactions.map(x=>x.id));incoming.transactions.forEach(x=>{if(!ids.has(x.id))data.transactions.push(x)});
     let pids=new Set(data.people.map(x=>x.id));incoming.people.forEach(x=>{if(!pids.has(x.id))data.people.push(x)});
@@ -1024,7 +1069,6 @@ function openModal(title,body){document.getElementById('modalTitle').innerHTML=t
 function closeModal(){document.getElementById('modal').classList.remove('show')}
 window.onclick=e=>{if(e.target.id==='modal')closeModal()}
 
-
 function showAuth(message=''){
   currentUser=null;cloudReady=false;
   document.getElementById('authGate').style.display='flex';
@@ -1041,7 +1085,13 @@ function clearAuthError(){
   const box=document.getElementById('authError');
   if(box){box.textContent='';box.style.display='none';}
 }
-function validateAllowedEmail(user){ return !!user?.id; }
+// Enforces the allowed-email restriction when ALLOWED_EMAIL is set; otherwise any account is allowed and RLS isolates the data.
+function validateAllowedEmail(user){
+  const allowed=String(window.FINANCE_CONFIG?.ALLOWED_EMAIL||'').trim().toLowerCase();
+  if(!user?.id) return false;
+  if(!allowed) return true;
+  return String(user.email||'').trim().toLowerCase()===allowed;
+}
 async function loadUserCloudData(user){
   cloudReady=false;
   activeStorageKey=KEY+'_'+user.id;
@@ -1057,31 +1107,15 @@ async function loadUserCloudData(user){
     await idbWrite(data).catch(()=>{});
     setCloudStatus('✓ Your cloud finance data is loaded');
   }else{
-    // Only the explicitly configured legacy owner may import the old shared single-user browser cache.
-    // New users always start with an empty account, preventing cross-account data leakage on shared devices.
-    const legacyEmail=String(window.FINANCE_CONFIG?.LEGACY_MIGRATION_EMAIL||'').trim().toLowerCase();
-    const userEmail=String(user.email||'').trim().toLowerCase();
-    let initialData=defaultData();
-    if(legacyEmail && userEmail===legacyEmail){
-      try{
-        const raw=localStorage.getItem(KEY);
-        if(raw){const parsed=JSON.parse(raw);if(parsed&&parsed.version)initialData=normalizeFinanceData(parsed);}
-        else {
-          const legacyBackup=await new Promise(resolve=>{
-            openFinanceDB().then(db=>{const tx=db.transaction(IDB_STORE,'readonly');const req=tx.objectStore(IDB_STORE).get('data');req.onsuccess=()=>{const v=req.result;db.close();resolve(v||null)};req.onerror=()=>{db.close();resolve(null)}}).catch(()=>resolve(null));
-          });
-          if(legacyBackup?.version) initialData=normalizeFinanceData(legacyBackup);
-        }
-      }catch(e){console.warn('Legacy cache migration skipped:',e)}
-    }
-    data=initialData;
+    // New accounts always start empty, so no data from earlier browser sessions can leak into them.
+    data=defaultData();
     const {error:insertError}=await supabaseClient.from('finance_data').insert({
       user_id:user.id,data,updated_at:new Date().toISOString()
     });
     if(insertError) throw insertError;
     try{localStorage.setItem(activeStorageKey,JSON.stringify(data));hasLocalData=true}catch(e){}
     await idbWrite(data).catch(()=>{});
-    setCloudStatus(legacyEmail && userEmail===legacyEmail ? '✓ Account created; legacy data migration checked' : '✓ Your private finance workspace is ready');
+    setCloudStatus('✓ Your private finance workspace is ready');
   }
   cloudReady=true;
   render();
@@ -1099,7 +1133,8 @@ async function activateSession(session){
     showAuth('This private application is restricted to the configured email address.');
     return;
   }
-  if(activeAuthUserId===user.id && cloudReady) return;
+  // Claim the session BEFORE any await so duplicate auth events return early and do not double-insert.
+  if(activeAuthUserId===user.id) return;
   activeAuthUserId=user.id;
   currentUser=user;
   document.getElementById('authGate').style.display='none';
@@ -1113,7 +1148,7 @@ async function activateSession(session){
     console.error('Unable to load cloud data:',error);
     cloudReady=false;
     setCloudStatus('Unable to load cloud data: '+(error.message||'Unknown error'),true);
-    alert('Could not load your Supabase data. Check that the multi-user SQL policies are installed and your account is confirmed.\\n\\n'+(error.message||''));
+    alert('Could not load your data. Check that the SQL policies are installed and your account is confirmed.\n\n'+(error.message||''));
   }
 }
 async function startGoogleLogin(){
